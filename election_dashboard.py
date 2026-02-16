@@ -1,10 +1,12 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import requests
 from bs4 import BeautifulSoup
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import re
 from dotenv import load_dotenv
 
@@ -50,6 +52,155 @@ def get_price_pct(market):
             except (ValueError, TypeError):
                 continue
     return None
+
+
+# ====================== CANDLESTICK DATA ======================
+@st.cache_data(ttl=300)
+def fetch_candlesticks(series_ticker, market_ticker, days_back=90, period_interval=1440):
+    """
+    Fetch OHLCV candlestick data from Kalshi.
+    
+    Endpoint: GET /series/{series_ticker}/markets/{market_ticker}/candlesticks
+    period_interval: 1 (1min), 60 (1hr), 1440 (1day)
+    """
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=days_back)
+    start_ts = int(start.timestamp())
+    end_ts = int(now.timestamp())
+
+    try:
+        data = kalshi_get(
+            f"series/{series_ticker}/markets/{market_ticker}/candlesticks",
+            params={
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+                "period_interval": period_interval,
+            },
+        )
+        candles = data.get("candlesticks", [])
+        if not candles:
+            return pd.DataFrame()
+
+        rows = []
+        for c in candles:
+            price = c.get("price", {})
+            # Skip synthetic candles where all OHLC are null
+            close_val = price.get("close_dollars") or price.get("close")
+            if close_val is None:
+                continue
+
+            ts = c.get("end_period_ts")
+            if ts is None:
+                continue
+
+            def _parse(p, key):
+                dkey = f"{key}_dollars"
+                if p.get(dkey) is not None:
+                    try:
+                        return round(float(p[dkey]) * 100, 2)
+                    except (ValueError, TypeError):
+                        pass
+                if p.get(key) is not None:
+                    try:
+                        return float(p[key])
+                    except (ValueError, TypeError):
+                        pass
+                return None
+
+            rows.append({
+                "timestamp": datetime.fromtimestamp(ts, tz=timezone.utc),
+                "open": _parse(price, "open"),
+                "high": _parse(price, "high"),
+                "low": _parse(price, "low"),
+                "close": _parse(price, "close"),
+                "volume": c.get("volume", 0),
+            })
+
+        df = pd.DataFrame(rows)
+        if not df.empty:
+            df = df.sort_values("timestamp").reset_index(drop=True)
+            df = df.dropna(subset=["close"])
+        return df
+
+    except Exception as e:
+        st.warning(f"Candlestick fetch failed for {market_ticker}: {e}")
+        return pd.DataFrame()
+
+
+def build_price_chart(candle_dfs):
+    """
+    Build a Plotly chart with price lines + volume bars.
+    candle_dfs: list of (label, color, dataframe) tuples
+    """
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.75, 0.25],
+    )
+
+    for label, color, df in candle_dfs:
+        if df.empty:
+            continue
+
+        # Price line (close)
+        fig.add_trace(
+            go.Scatter(
+                x=df["timestamp"], y=df["close"],
+                name=label,
+                line=dict(color=color, width=2),
+                hovertemplate="%{x|%b %d}<br>%{y:.1f}%<extra>" + label + "</extra>",
+            ),
+            row=1, col=1,
+        )
+
+        # High-low range band
+        if df["high"].notna().any() and df["low"].notna().any():
+            fig.add_trace(
+                go.Scatter(
+                    x=pd.concat([df["timestamp"], df["timestamp"][::-1]]),
+                    y=pd.concat([df["high"], df["low"][::-1]]),
+                    fill="toself",
+                    fillcolor=f"rgba(128,128,128,0.08)",
+                    line=dict(width=0),
+                    name=f"{label} range",
+                    showlegend=False,
+                    hoverinfo="skip",
+                ),
+                row=1, col=1,
+            )
+
+        # Volume bars
+        fig.add_trace(
+            go.Bar(
+                x=df["timestamp"], y=df["volume"],
+                name=f"{label} vol",
+                marker_color=color, opacity=0.4,
+                showlegend=False,
+                hovertemplate="%{x|%b %d}<br>Vol: %{y:,.0f}<extra></extra>",
+            ),
+            row=2, col=1,
+        )
+
+    fig.update_layout(
+        height=500,
+        margin=dict(t=80, b=20, l=60, r=20),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.08,
+            xanchor="center",
+            x=0.5,
+        ),
+        xaxis2_title="Date",
+        yaxis_title="Probability (%)",
+        yaxis2_title="Contracts",
+        hovermode="x unified",
+        template="plotly_dark",
+    )
+    fig.update_yaxes(range=[0, 100], row=1, col=1)
+
+    return fig
 
 
 # ====================== MARKET DISCOVERY ======================
@@ -325,9 +476,71 @@ if combo_implied:
         fig.update_layout(margin=dict(t=20, b=20, l=20, r=20), height=300)
         st.plotly_chart(fig, use_container_width=True)
 
-# Placeholder for price history
-st.subheader("Price History (placeholder)")
-st.info("Track with `/markets/{ticker}/candlesticks` endpoint + Plotly line chart")
+# ====================== PRICE HISTORY CHARTS ======================
+st.subheader("Price History")
+
+# Time range selector
+range_options = {"1W": 7, "1M": 30, "3M": 90, "6M": 180, "All": 365}
+selected_range = st.radio(
+    "Time range",
+    options=list(range_options.keys()),
+    index=2,  # default to 3M
+    horizontal=True,
+    label_visibility="collapsed",
+)
+days_back = range_options[selected_range]
+
+# Determine period interval based on range (avoid too many candles)
+if days_back <= 7:
+    period_interval = 60    # hourly for 1W
+elif days_back <= 30:
+    period_interval = 1440  # daily for 1M
+else:
+    period_interval = 1440  # daily for 3M+
+
+# ---- Congressional Control chart ----
+chart_data = []
+
+if house_direct:
+    house_candles = fetch_candlesticks(HOUSE_SERIES, house_direct["ticker"], days_back, period_interval)
+    if not house_candles.empty:
+        chart_data.append(("Dem House (Yes)", "#3b82f6", house_candles))
+
+if senate_direct:
+    senate_candles = fetch_candlesticks(SENATE_SERIES, senate_direct["ticker"], days_back, period_interval)
+    if not senate_candles.empty:
+        chart_data.append(("Rep Senate (Yes)", "#ef4444", senate_candles))
+
+if chart_data:
+    st.caption("Congressional Control — Probability Over Time")
+    fig = build_price_chart(chart_data)
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("No candlestick data available for the selected range.")
+
+# ---- Combo chart (all 4 scenarios) ----
+with st.expander("📊 Balance of Power Combo History", expanded=False):
+    combo_chart_data = []
+    combo_colors = {
+        "-DR": ("#6366f1", "Dem House + Rep Senate"),
+        "-DD": ("#3b82f6", "Dem House + Dem Senate"),
+        "-RR": ("#ef4444", "Rep House + Rep Senate"),
+        "-RD": ("#f97316", "Rep House + Dem Senate"),
+    }
+    for m in markets["combo"]:
+        for suffix, (color, label) in combo_colors.items():
+            if m["ticker"].upper().endswith(suffix):
+                combo_candles = fetch_candlesticks(COMBO_SERIES, m["ticker"], days_back, period_interval)
+                if not combo_candles.empty:
+                    combo_chart_data.append((label, color, combo_candles))
+                break
+
+    if combo_chart_data:
+        st.caption("Balance of Power Scenarios")
+        combo_fig = build_price_chart(combo_chart_data)
+        st.plotly_chart(combo_fig, use_container_width=True)
+    else:
+        st.info("No combo candlestick data available.")
 
 # ---- Debug ----
 with st.expander("🔧 Debug: Raw Market Data"):

@@ -1,0 +1,9 @@
+streamlit
+kalshi-python
+beautifulsoup4
+requests
+pandas
+plotly
+python-dotenv
+cryptography
+python-dotenv

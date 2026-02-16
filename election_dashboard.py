@@ -160,31 +160,40 @@ def fetch_rcp_generic():
         return 47.0, 43.0
 
 
-def rcp_to_house_fair_value(dem_generic):
-    """Generic ballot margin → implied Dem House control probability."""
-    margin = dem_generic - 50
+def rcp_to_house_fair_value(dem_generic, rep_generic):
+    """Generic ballot D-R margin → implied Dem House control probability.
+    
+    Historical rough model: each 1pt of generic ballot margin ≈ 4-5 House seats.
+    Dems need ~218 seats for control. Even margin → ~50/50; D+5 → strong Dem.
+    """
+    margin = dem_generic - rep_generic  # e.g. 47.6 - 42.4 = +5.2
+    # D+0 → ~50% control, each point shifts ~4.5 seats, scaled to probability
     implied_seats = 218 + (margin * 4.5)
-    return round(max(10.0, min(90.0, (implied_seats - 210) * 1.8)), 1)
+    house_prob = max(10.0, min(90.0, 50 + (margin * 6)))  # ~6% per point of margin
+    return round(house_prob, 1)
 
 
 # ====================== LOAD DATA ======================
 markets = discover_all_markets()
 rcp_dem, rcp_rep = fetch_rcp_generic()
-house_fair = rcp_to_house_fair_value(rcp_dem)
+house_fair = rcp_to_house_fair_value(rcp_dem, rcp_rep)
 SENATE_RCP_FAIR = 58.0  # Placeholder — replace with real model
 
 # Derive implied probs from combos (most reliable source)
 combo_implied = derive_from_combos(markets["combo"])
 
-# Also check direct House/Senate markets
-def best_direct(market_list):
-    if not market_list:
-        return None
-    best = max(market_list, key=lambda m: m.get("volume") or 0)
-    return best
+# Find the correct market by ticker suffix (not just highest volume!)
+# CONTROLH-2026-D = "Will Democrats win the House" → use for Dem House
+# CONTROLS-2026-R = "Will Republicans win the Senate" → use for Rep Senate
+def find_by_side(market_list, suffix):
+    """Find market whose ticker ends with the given suffix (e.g. '-D', '-R')."""
+    for m in market_list:
+        if m["ticker"].upper().endswith(suffix.upper()):
+            return m
+    return None
 
-house_direct = best_direct(markets["house"])
-senate_direct = best_direct(markets["senate"])
+house_direct = find_by_side(markets["house"], "-D")   # Dem House market
+senate_direct = find_by_side(markets["senate"], "-R")  # Rep Senate market
 
 # Determine Kalshi prices — prefer direct markets, fall back to combo-derived
 house_kalshi = None
@@ -206,30 +215,23 @@ if senate_kalshi is None and combo_implied:
     senate_source = "combo-implied (RR+DR)"
 
 # ====================== SIDEBAR ======================
-st.sidebar.markdown("### Market Sources")
-
-if house_direct:
-    st.sidebar.success(f"House: {house_direct['ticker']} ({get_price_pct(house_direct)}%)")
-else:
-    st.sidebar.info(f"House: no direct market found via series={HOUSE_SERIES}")
-
-if senate_direct:
-    st.sidebar.success(f"Senate: {senate_direct['ticker']} ({get_price_pct(senate_direct)}%)")
-else:
-    st.sidebar.info(f"Senate: no direct market found via series={SENATE_SERIES}")
+st.sidebar.markdown("### Direct Markets")
+for m in markets["house"]:
+    pct = get_price_pct(m)
+    selected = " ✅" if house_direct and m["ticker"] == house_direct["ticker"] else ""
+    st.sidebar.text(f"  {m['ticker']}: {pct}%{selected}")
+for m in markets["senate"]:
+    pct = get_price_pct(m)
+    selected = " ✅" if senate_direct and m["ticker"] == senate_direct["ticker"] else ""
+    st.sidebar.text(f"  {m['ticker']}: {pct}%{selected}")
 
 if combo_implied:
-    st.sidebar.markdown("**Combo-Implied Probs:**")
+    st.sidebar.markdown("**Combo-Implied:**")
     st.sidebar.text(f"  Dem House: {combo_implied['dem_house']}%")
     st.sidebar.text(f"  Rep Senate: {combo_implied['rep_senate']}%")
-    st.sidebar.text(f"  Raw: {combo_implied['combos']}")
-else:
-    st.sidebar.warning("No combo markets found")
 
 st.sidebar.markdown("---")
-st.sidebar.text(f"House markets found: {len(markets['house'])}")
-st.sidebar.text(f"Senate markets found: {len(markets['senate'])}")
-st.sidebar.text(f"Combo markets found: {len(markets['combo'])}")
+st.sidebar.caption(f"House: {len(markets['house'])} mkts | Senate: {len(markets['senate'])} mkts | Combos: {len(markets['combo'])} mkts")
 
 # ====================== SIGNALS ======================
 signals = []
@@ -265,6 +267,11 @@ if senate_kalshi is not None:
     })
 
 df = pd.DataFrame(signals) if signals else pd.DataFrame()
+# Clean up float display
+if not df.empty:
+    for col in ["Kalshi %", "RCP Fair %", "Edge %"]:
+        if col in df.columns:
+            df[col] = df[col].map(lambda x: round(x, 1))
 
 
 def highlight_signal(row):

@@ -86,40 +86,6 @@ election-predictions-dashboard/
 └── .gitignore
 ```
 
-## Feature Ideas
-
-### Better Valuation Models
-- **Replace the Senate placeholder** — The Senate fair value is hardcoded at 58%. Build a real model using state-level Senate polling or race ratings (Cook Political Report, Sabato's Crystal Ball) to derive an implied probability.
-- **Regression-based House model** — Replace the linear 6%-per-point heuristic with a logistic regression trained on historical generic ballot vs. seat share data going back to 1998.
-- **Ensemble signals** — Weight multiple inputs (generic ballot, approval ratings, fundraising totals, special election results) into a single composite fair value instead of relying on one poll source.
-
-### Additional Data Sources
-- **Multiple polling aggregators** — Pull from FiveThirtyEight, Silver Bulletin, and The Economist in addition to RCP; display a consensus average and flag when aggregators disagree.
-- **Individual race polling** — Scrape competitive House/Senate race polls to build bottom-up seat count estimates rather than relying solely on the generic ballot.
-- **Cross-platform odds** — Fetch prices from Polymarket, PredictIt, or Metaculus and show side-by-side comparisons to identify cross-market arbitrage.
-
-### Alerts and Notifications
-- **Wire up Telegram/Discord alerts** — The `.env` supports these already but the sending logic isn't implemented. Fire a notification when a signal crosses the edge threshold.
-- **Email digest** — Send a daily summary of current signals and any threshold crossings from the past 24 hours.
-- **Configurable per-market thresholds** — Allow different edge thresholds for House vs. Senate vs. combo markets since liquidity and volatility differ.
-
-### Portfolio and Trading
-- ~~**Authenticated portfolio view**~~ — ✅ Implemented. Displays balance, positions, resting orders, and settlement history.
-- **Paper trading mode** — Let users log hypothetical trades from signals and track simulated returns over time without risking real money.
-- **Order placement** — For authenticated users, add one-click buttons to place limit orders on Kalshi directly from the signal table.
-
-### Historical Analysis
-- **Backtesting engine** — Store daily snapshots of polls and market prices in a local SQLite database; replay historical signals to measure accuracy and Sharpe ratio.
-- **Signal history log** — Persist every signal generated with timestamps so users can review when signals fired and how they resolved.
-- **Polling trend charts** — Plot the generic ballot margin over time alongside market prices to visualize divergences and convergences.
-
-### UX and Infrastructure
-- **Multi-page Streamlit app** — Split the single file into pages (Overview, Signals, Charts, Portfolio, Settings) for better navigation as features grow.
-- **Dark/light theme toggle** — The Plotly charts use `plotly_dark` but Streamlit defaults to light; unify the theme with a user toggle.
-- **Docker deployment** — Add a `Dockerfile` and `docker-compose.yml` for one-command deployment with environment variable passthrough.
-- **Mobile-friendly layout** — Add responsive column breakpoints so the dashboard is usable on phones and tablets.
-- **Data export** — Add CSV/JSON download buttons for the signal table, combo breakdown, and candlestick data.
-
 ## License
 
 See repository for license details.

@@ -12,6 +12,7 @@ from kalshi_client import (
     SENATE_SERIES,
     discover_all_markets,
     fetch_balance,
+    fetch_market_price,
     fetch_positions,
     fetch_resting_orders,
     fetch_settlements,
@@ -243,7 +244,10 @@ if auth:
             else:
                 fees = p.get("fees_paid", 0) / 100
 
-            # Look up current market price for unrealized P&L estimate
+            # Look up current market price for unrealized P&L estimate.
+            # Check the already-fetched markets dict first; fall back to a
+            # direct per-ticker API call for positions outside the three
+            # pre-fetched series (e.g. governor races, individual Senate races).
             current_price = None
             for cat in ("house", "senate", "combo"):
                 for m in markets.get(cat, []):
@@ -252,6 +256,24 @@ if auth:
                         break
                 if current_price is not None:
                     break
+            if current_price is None:
+                current_price = fetch_market_price(ticker)
+
+            # Unrealized P&L: mark-to-market value minus cost basis (market_exposure)
+            unrealized_pnl = None
+            if current_price is not None and abs(position) > 0:
+                contracts = abs(position)
+                if position > 0:  # Yes contracts
+                    current_value = (current_price / 100) * contracts
+                else:  # No contracts
+                    current_value = ((100 - current_price) / 100) * contracts
+                unrealized_pnl = current_value - market_exposure
+
+            total_pnl = (
+                realized_pnl + unrealized_pnl
+                if unrealized_pnl is not None
+                else None
+            )
 
             pos_rows.append(
                 {
@@ -261,6 +283,12 @@ if auth:
                     "Market Price": f"{current_price:.1f}%" if current_price else "—",
                     "Exposure": f"${market_exposure:,.2f}",
                     "Realized P&L": f"${realized_pnl:+,.2f}",
+                    "Unrealized P&L": (
+                        f"${unrealized_pnl:+,.2f}" if unrealized_pnl is not None else "—"
+                    ),
+                    "Total P&L": (
+                        f"${total_pnl:+,.2f}" if total_pnl is not None else "—"
+                    ),
                     "Fees": f"${fees:,.2f}",
                 }
             )
@@ -275,7 +303,9 @@ if auth:
                     return "color: #ef4444"
                 return ""
 
-            styled = df_pos.style.map(_color_pnl, subset=["Realized P&L"])
+            styled = df_pos.style.map(
+                _color_pnl, subset=["Realized P&L", "Unrealized P&L", "Total P&L"]
+            )
             st.dataframe(styled, use_container_width=True, hide_index=True)
         else:
             st.info("No open positions.")

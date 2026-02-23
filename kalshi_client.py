@@ -140,6 +140,17 @@ class KalshiAuth:
         return resp.json()
 
 
+@st.cache_data(ttl=120)
+def fetch_market_price(ticker: str) -> float | None:
+    """Fetch the current yes price for any single ticker (public endpoint)."""
+    try:
+        data = kalshi_get(f"markets/{ticker}")
+        market = data.get("market", {})
+        return get_price_pct(market)
+    except Exception:
+        return None
+
+
 def load_auth() -> KalshiAuth | None:
     """Load Kalshi credentials from environment; return None if missing."""
     key_id = os.getenv("KALSHI_KEY_ID", "").strip()

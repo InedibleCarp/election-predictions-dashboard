@@ -359,7 +359,30 @@ if auth:
                 cost_yes = s.get("yes_total_cost", 0) / 100
                 cost_no = s.get("no_total_cost", 0) / 100
                 total_cost = cost_yes + cost_no
-                net = revenue_val - total_cost
+
+                # Detect early cashout: the Kalshi settlement record stores the
+                # *original* position counts (yes_count / no_count) but only
+                # credits revenue for contracts still held at settlement.  When
+                # a position is sold or cashed out before expiry the winning
+                # side's count is non-zero yet revenue is $0, which would
+                # otherwise produce a false full-cost loss.
+                market_result = s.get("market_result", "").lower()
+                if market_result == "yes":
+                    winning_count = s.get("yes_count", 0)
+                elif market_result == "no":
+                    winning_count = s.get("no_count", 0)
+                else:
+                    winning_count = 0
+
+                cashed_out = (
+                    revenue_val == 0 and winning_count > 0 and total_cost > 0
+                )
+
+                if cashed_out:
+                    net_pnl_display = "Cashed Out"
+                else:
+                    net = revenue_val - total_cost
+                    net_pnl_display = f"${net:+,.2f}"
 
                 settle_rows.append(
                     {
@@ -369,13 +392,15 @@ if auth:
                         "No Held": s.get("no_count", 0),
                         "Revenue": f"${revenue_val:,.2f}",
                         "Cost": f"${total_cost:,.2f}",
-                        "Net P&L": f"${net:+,.2f}",
+                        "Net P&L": net_pnl_display,
                         "Settled": s.get("settled_time", "")[:16],
                     }
                 )
             df_settle = pd.DataFrame(settle_rows)
 
             def _color_net(val):
+                if val == "Cashed Out":
+                    return "color: #94a3b8"
                 if val.startswith("$+") or val.startswith("+"):
                     return "color: #22c55e"
                 elif val.startswith("$-") or val.startswith("-"):

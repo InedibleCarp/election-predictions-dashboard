@@ -353,13 +353,46 @@ if auth:
     with st.expander("📜 Settlement History", expanded=False):
         settlements = fetch_settlements(auth)
         if settlements:
+            def _money_from_settlement(settlement, base_field_names):
+                """Read monetary values from settlement object across dollars/fp/cents variants."""
+                for base in base_field_names:
+                    for dollars_field in (f"{base}_dollars", f"{base}_fp"):
+                        val = settlement.get(dollars_field)
+                        if val is not None:
+                            try:
+                                return float(val)
+                            except (TypeError, ValueError):
+                                pass
+
+                    val = settlement.get(base)
+                    if val is not None:
+                        try:
+                            return float(val) / 100
+                        except (TypeError, ValueError):
+                            pass
+
+                return None
+
             settle_rows = []
             for s in settlements:
-                revenue_val = s.get("revenue", 0) / 100
-                cost_yes = s.get("yes_total_cost", 0) / 100
-                cost_no = s.get("no_total_cost", 0) / 100
+                revenue_val = _money_from_settlement(s, ["revenue"]) or 0.0
+                cost_yes = _money_from_settlement(s, ["yes_total_cost"]) or 0.0
+                cost_no = _money_from_settlement(s, ["no_total_cost"]) or 0.0
                 total_cost = cost_yes + cost_no
-                net = revenue_val - total_cost
+                # For positions closed before settlement, rely on API-provided
+                # total P&L fields when available (includes pre-settlement trades).
+                net = _money_from_settlement(
+                    s,
+                    [
+                        "net_pnl",
+                        "pnl",
+                        "profit",
+                        "realized_pnl",
+                        "market_pnl",
+                    ],
+                )
+                if net is None:
+                    net = revenue_val - total_cost
 
                 settle_rows.append(
                     {

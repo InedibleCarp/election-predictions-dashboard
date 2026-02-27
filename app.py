@@ -128,12 +128,12 @@ if not df_signals.empty:
 
 def highlight_signal(row):
     if "Buy" in row["Signal"]:
-        bg = "#0f4"
+        style = "background-color: #22c55e; color: white"
     elif "Sell" in row["Signal"]:
-        bg = "#f44"
+        style = "background-color: #ef4444; color: white"
     else:
-        bg = "#ffeb3b"
-    return ["background-color: " + bg if col == "Signal" else "" for col in row.index]
+        style = "background-color: #f59e0b; color: #1a1a1a"
+    return [style if col == "Signal" else "" for col in row.index]
 
 
 # ====================== MAIN UI ======================
@@ -154,11 +154,11 @@ if not df_signals.empty:
     df_styled = df_signals.style.apply(highlight_signal, axis=1)
     st.dataframe(df_styled, use_container_width=True, hide_index=True)
 else:
-    st.write("No signals available.")
+    st.info("No signals available — Kalshi market data or RCP polling may be temporarily unavailable.")
 
 # ---- Combo breakdown ----
+st.subheader("Balance of Power (Combo Markets)")
 if combo_implied:
-    st.subheader("Balance of Power (Combo Markets)")
     combo_df = pd.DataFrame(
         [
             {
@@ -192,6 +192,8 @@ if combo_implied:
         )
         fig.update_layout(margin=dict(t=20, b=20, l=20, r=20), height=300)
         st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Combo market data is unavailable — unable to derive Balance of Power breakdown.")
 
 # ====================== PORTFOLIO ======================
 auth = load_auth()
@@ -213,6 +215,8 @@ if auth:
                 "Portfolio Value",
                 f"${balance_data['portfolio_value_cents'] / 100:,.2f}",
             )
+    else:
+        st.info("Balance data unavailable — check your API credentials.")
 
     # ── Open positions ──
     positions = fetch_positions(auth)

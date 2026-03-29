@@ -220,6 +220,10 @@ if auth:
 
     # ── Open positions ──
     positions = fetch_positions(auth)
+    with st.expander("🐛 Debug: raw positions response", expanded=False):
+        st.write(f"Count: {len(positions)}")
+        if positions:
+            st.json(positions[0])
     if positions:
         st.markdown("#### Open Positions")
         pos_rows = []

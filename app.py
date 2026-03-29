@@ -225,9 +225,16 @@ if auth:
         pos_rows = []
         for p in positions:
             ticker = p.get("ticker", "")
-            position = p.get("position", 0)
-            if position == 0:
+            # The Kalshi API now returns yes_position / no_position separately
+            # instead of a single net `position` field.  Fall back to the old
+            # field so the code works against both API versions.
+            yes_pos = int(p.get("yes_position") or p.get("position") or 0)
+            no_pos = int(p.get("no_position") or 0)
+            if yes_pos == 0 and no_pos == 0:
                 continue
+            # Represent as a signed net position for the rest of the logic:
+            # positive → holding Yes contracts, negative → holding No contracts.
+            position = yes_pos - no_pos
 
             # Use fixed-point dollar fields when available
             market_exposure = p.get("market_exposure_dollars")
